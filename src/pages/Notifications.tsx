@@ -2,78 +2,90 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { UserPlus, Briefcase, Package, DollarSign, MessageCircle, Bell } from "lucide-react";
 import { useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { formatDistanceToNow } from "date-fns";
 
 const filterTabs = ["All", "Mentions", "Jobs", "Orders", "Payments", "Follows"];
-
-const notifications = [
-  { type: "follow", icon: UserPlus, color: "text-primary", title: "Alex followed you", desc: "", time: "2m ago", unread: true, action: "Follow back" },
-  { type: "job", icon: Briefcase, color: "text-primary", title: "New application for Senior Solana Developer", desc: "3 new applicants", time: "15m ago", unread: true, action: "View Apps" },
-  { type: "order", icon: Package, color: "text-primary", title: "New order for Web3 Landing Page Design", desc: "From @mariasantos — 150 USDC", time: "1h ago", unread: true, action: "View Order" },
-  { type: "payment", icon: DollarSign, color: "text-primary", title: "Payment Received: 300 USDC", desc: "Smart Contract Audit completed for @devpatel", time: "3h ago", unread: false, action: "View Transaction" },
-  { type: "follow", icon: UserPlus, color: "text-primary", title: "Luna Kim followed you", desc: "", time: "5h ago", unread: false, action: "Follow back" },
-  { type: "message", icon: MessageCircle, color: "text-primary", title: "New message from Jordan Taylor", desc: "\"Can you take a look at this wireframe?\"", time: "1d ago", unread: false, action: "Reply" },
-  { type: "order", icon: Package, color: "text-primary", title: "Order completed: Brand Identity Kit", desc: "Client left a 5-star review", time: "1d ago", unread: false, action: "View Review" },
-  { type: "system", icon: Bell, color: "text-muted-foreground", title: "Your Builder Score increased to 842", desc: "You're now in the top 2% of founders", time: "2d ago", unread: false },
-  { type: "payment", icon: DollarSign, color: "text-primary", title: "Payment Received: 200 USDC", desc: "Brand Identity Kit for @saraw", time: "3d ago", unread: false, action: "View Transaction" },
-];
+const iconMap: Record<string, any> = { follow: UserPlus, job: Briefcase, order: Package, payment: DollarSign, message: MessageCircle, system: Bell };
 
 export default function Notifications() {
+  const { user } = useAuth();
   const [activeFilter, setActiveFilter] = useState("All");
+  const queryClient = useQueryClient();
+
+  const { data: notifications = [], isLoading } = useQuery({
+    queryKey: ["notifications", user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user,
+  });
+
+  const markAllRead = useMutation({
+    mutationFn: async () => {
+      if (!user) return;
+      await supabase.from("notifications").update({ is_read: true }).eq("user_id", user.id).eq("is_read", false);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
 
   const filtered = activeFilter === "All"
     ? notifications
-    : notifications.filter(n => {
+    : notifications.filter((n: any) => {
         const map: Record<string, string> = { Mentions: "message", Jobs: "job", Orders: "order", Payments: "payment", Follows: "follow" };
         return n.type === map[activeFilter];
       });
+
+  if (!user) {
+    return (
+      <DashboardLayout>
+        <div className="flex h-64 items-center justify-center text-muted-foreground">Sign in to view notifications.</div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
       <div className="flex-1">
         <div className="flex items-center justify-between border-b border-border p-4">
           <h1 className="text-xl font-bold text-foreground">Notifications</h1>
-          <button className="text-sm text-muted-foreground hover:text-foreground">Mark all read</button>
+          <button onClick={() => markAllRead.mutate()} className="text-sm text-muted-foreground hover:text-foreground">Mark all read</button>
         </div>
 
-        <div className="flex border-b border-border">
+        <div className="flex overflow-x-auto border-b border-border scrollbar-none">
           {filterTabs.map((t) => (
-            <button
-              key={t}
-              onClick={() => setActiveFilter(t)}
-              className={`flex-1 py-3 text-sm font-medium transition-colors ${
-                activeFilter === t ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
+            <button key={t} onClick={() => setActiveFilter(t)} className={`shrink-0 flex-1 py-3 text-sm font-medium transition-colors ${activeFilter === t ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
               {t}
             </button>
           ))}
         </div>
 
-        <div>
-          {filtered.map((n, i) => {
-            const Icon = n.icon;
+        {isLoading ? (
+          <div className="p-8 text-center text-muted-foreground">Loading...</div>
+        ) : filtered.length === 0 ? (
+          <div className="p-8 text-center text-muted-foreground">No notifications yet.</div>
+        ) : (
+          filtered.map((n: any) => {
+            const Icon = iconMap[n.type] || Bell;
             return (
-              <div
-                key={i}
-                className={`flex items-start gap-3 border-b border-border p-4 transition-colors hover:bg-secondary/30 ${
-                  n.unread ? "border-l-2 border-l-primary bg-primary/[0.03]" : ""
-                }`}
-              >
-                <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${n.unread ? "bg-primary/10" : "bg-secondary"}`}>
-                  <Icon className={`h-4 w-4 ${n.color}`} />
+              <div key={n.id} className={`flex items-start gap-3 border-b border-border p-4 transition-colors hover:bg-secondary/30 ${!n.is_read ? "border-l-2 border-l-primary bg-primary/[0.03]" : ""}`}>
+                <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${!n.is_read ? "bg-primary/10" : "bg-secondary"}`}>
+                  <Icon className="h-4 w-4 text-primary" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm ${n.unread ? "font-semibold text-foreground" : "text-foreground"}`}>{n.title}</p>
-                  {n.desc && <p className="mt-0.5 text-sm text-muted-foreground">{n.desc}</p>}
-                  <p className="mt-1 text-xs text-muted-foreground">{n.time}</p>
+                  <p className={`text-sm ${!n.is_read ? "font-semibold text-foreground" : "text-foreground"}`}>{n.title}</p>
+                  {n.description && <p className="mt-0.5 text-sm text-muted-foreground">{n.description}</p>}
+                  <p className="mt-1 text-xs text-muted-foreground">{formatDistanceToNow(new Date(n.created_at), { addSuffix: true })}</p>
                 </div>
-                {n.action && (
-                  <Button variant="outline" size="sm" className="shrink-0">{n.action}</Button>
-                )}
               </div>
             );
-          })}
-        </div>
+          })
+        )}
       </div>
     </DashboardLayout>
   );
