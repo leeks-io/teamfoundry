@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Hexagon, Link as LinkIcon, Eye, EyeOff } from "lucide-react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 const roles = [
   { icon: "🎯", label: "Job Seeker" },
@@ -15,15 +17,47 @@ export default function Auth() {
   const [isSignup, setIsSignup] = useState(searchParams.get("signup") === "true");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const { signUp, signIn } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      if (isSignup) {
+        const { error } = await signUp(email, password, fullName);
+        if (error) {
+          toast.error(error.message);
+        } else {
+          toast.success("Account created! Check your email to confirm.");
+          navigate("/onboarding");
+        }
+      } else {
+        const { error } = await signIn(email, password);
+        if (error) {
+          toast.error(error.message);
+        } else {
+          toast.success("Welcome back!");
+          navigate("/dashboard");
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-[420px] rounded-2xl border border-border bg-background p-8">
+      <div className="w-full max-w-[420px] rounded-2xl border border-border bg-background p-6 sm:p-8">
         <div className="mb-6 flex justify-center">
           <Hexagon className="h-10 w-10 text-primary" />
         </div>
 
-        <h1 className="mb-6 text-center text-2xl font-bold text-foreground">
+        <h1 className="mb-6 text-center text-xl sm:text-2xl font-bold text-foreground">
           {isSignup ? "Create your account" : "Sign in to Foundry"}
         </h1>
 
@@ -49,15 +83,32 @@ export default function Auth() {
           <div className="h-px flex-1 bg-border" />
         </div>
 
-        <div className="flex flex-col gap-3">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {isSignup && (
-            <Input placeholder="Full name" className="bg-input border-border text-foreground placeholder:text-muted-foreground focus-visible:ring-primary" />
+            <Input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Full name"
+              required
+              className="bg-input border-border text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
+            />
           )}
-          <Input type="email" placeholder="Email" className="bg-input border-border text-foreground placeholder:text-muted-foreground focus-visible:ring-primary" />
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Email"
+            required
+            className="bg-input border-border text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
+          />
           <div className="relative">
             <Input
               type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
+              required
+              minLength={6}
               className="bg-input border-border pr-10 text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
             />
             <button
@@ -69,10 +120,10 @@ export default function Auth() {
             </button>
           </div>
 
-          <Button variant="hero" className="mt-1 w-full">
-            {isSignup ? "Create Account" : "Next"}
+          <Button variant="hero" className="mt-1 w-full" type="submit" disabled={loading}>
+            {loading ? "Loading..." : isSignup ? "Create Account" : "Sign In"}
           </Button>
-        </div>
+        </form>
 
         {isSignup && (
           <div className="mt-5">

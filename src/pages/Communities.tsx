@@ -1,180 +1,188 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, Plus, Lock, Users, Headphones } from "lucide-react";
+import { Search, Plus, Lock, Headphones } from "lucide-react";
 import { useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
-const categories = ["All", "Web3", "AI Builders", "Design", "Founders", "DeFi", "Gaming"];
-
-const featured = [
-  { name: "Solana Builders", members: "2.4k", category: "Web3", joined: false },
-  { name: "AI Engineers Hub", members: "1.8k", category: "AI Builders", joined: true },
-  { name: "Design Masters", members: "950", category: "Design", joined: false },
-  { name: "Founder Circle", members: "3.1k", category: "Founders", joined: false },
-  { name: "DeFi Degens", members: "4.2k", category: "DeFi", joined: true },
-];
-
-const communities = [
-  { name: "Solana Builders", members: "2.4k", desc: "A community for builders on the Solana ecosystem. Share projects, find collaborators.", category: "Web3", isLive: true, liveTopic: "How I raised $100k in 30 days", listeners: 245 },
-  { name: "AI Engineers Hub", members: "1.8k", desc: "Discuss the latest in AI/ML, share tools, and collaborate on projects.", category: "AI Builders", isLive: false },
-  { name: "Design Masters", members: "950", desc: "UI/UX designers sharing work, critiques, and resources.", category: "Design", isLive: false },
-  { name: "Founder Circle", members: "3.1k", desc: "Founders helping founders. Share wins, struggles, and advice.", category: "Founders", isLive: true, liveTopic: "Building in public — week 12 update", listeners: 89 },
-  { name: "DeFi Degens", members: "4.2k", desc: "All things DeFi — protocols, yield farming, new launches.", category: "DeFi", isLive: false },
-  { name: "GameFi Guild", members: "1.2k", desc: "Gaming meets Web3. Discuss GameFi projects and P2E mechanics.", category: "Gaming", isLive: false },
-  { name: "Private Alpha", members: "320", desc: "Exclusive community for premium members. Early access to deals.", category: "Web3", isLive: false, isPrivate: true },
-];
+const categoryFilters = ["All", "Web3", "AI Builders", "Design", "Founders", "DeFi", "Gaming"];
 
 export default function Communities() {
+  const { user } = useAuth();
   const [activeCat, setActiveCat] = useState("All");
-  const [selectedCommunity, setSelectedCommunity] = useState<typeof communities[0] | null>(null);
+  const [search, setSearch] = useState("");
+  const [selectedCommunity, setSelectedCommunity] = useState<any>(null);
   const [communityTab, setCommunityTab] = useState("Posts");
+  const [showCreate, setShowCreate] = useState(false);
+  const [newCommunity, setNewCommunity] = useState({ name: "", description: "", category: "Web3" });
+  const queryClient = useQueryClient();
 
-  const filtered = activeCat === "All" ? communities : communities.filter(c => c.category === activeCat);
+  const { data: communities = [], isLoading } = useQuery({
+    queryKey: ["communities"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("communities").select("*").order("member_count", { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const { data: myMemberships = [] } = useQuery({
+    queryKey: ["my-memberships", user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data } = await supabase.from("community_members").select("community_id").eq("user_id", user.id);
+      return data?.map((m: any) => m.community_id) || [];
+    },
+    enabled: !!user,
+  });
+
+  const createCommunity = useMutation({
+    mutationFn: async () => {
+      if (!user) return;
+      const { error } = await supabase.from("communities").insert({ created_by: user.id, name: newCommunity.name, description: newCommunity.description, category: newCommunity.category });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["communities"] });
+      setShowCreate(false);
+      toast.success("Community created!");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const joinCommunity = useMutation({
+    mutationFn: async (communityId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from("community_members").insert({ community_id: communityId, user_id: user.id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["communities"] });
+      queryClient.invalidateQueries({ queryKey: ["my-memberships"] });
+      toast.success("Joined community!");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const filtered = communities.filter((c: any) => {
+    if (activeCat !== "All" && c.category !== activeCat) return false;
+    if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
 
   return (
     <DashboardLayout>
-      <div className="flex">
-        <div className="flex-1 border-r border-border">
+      <div className="flex flex-col lg:flex-row">
+        <div className="flex-1 border-r border-border min-w-0">
           {selectedCommunity ? (
-            // Community detail view
             <div>
-              <button onClick={() => setSelectedCommunity(null)} className="border-b border-border p-4 text-sm text-muted-foreground hover:text-foreground">
-                ← Back to Communities
-              </button>
+              <button onClick={() => setSelectedCommunity(null)} className="border-b border-border p-4 text-sm text-muted-foreground hover:text-foreground">← Back</button>
               <div className="h-32 bg-secondary" />
               <div className="border-b border-border p-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-muted text-lg font-bold text-foreground">
-                    {selectedCommunity.name.slice(0, 2)}
-                  </div>
+                  <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-muted text-lg font-bold text-foreground">{selectedCommunity.name.slice(0, 2)}</div>
                   <div>
                     <h1 className="text-xl font-bold text-foreground">{selectedCommunity.name}</h1>
-                    <p className="text-sm text-muted-foreground">{selectedCommunity.members} members</p>
+                    <p className="text-sm text-muted-foreground">{selectedCommunity.member_count} members</p>
                   </div>
-                  <Button variant="hero" size="sm" className="ml-auto">Join</Button>
                 </div>
-                <p className="mt-3 text-sm text-muted-foreground">{selectedCommunity.desc}</p>
+                {selectedCommunity.description && <p className="mt-3 text-sm text-muted-foreground">{selectedCommunity.description}</p>}
               </div>
-
-              {/* Live Space */}
-              {selectedCommunity.isLive && (
-                <div className="border-b border-border p-4">
-                  <div className="rounded-lg border border-primary bg-primary/5 p-4">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
-                      <span className="font-medium text-foreground">Live Space</span>
-                    </div>
-                    <p className="mt-1 font-semibold text-foreground">{selectedCommunity.liveTopic}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">+{selectedCommunity.listeners} listening</p>
-                    <Button variant="hero" size="sm" className="mt-3">
-                      <Headphones className="mr-1 h-4 w-4" /> Join Space
-                    </Button>
-                  </div>
-                </div>
-              )}
-
               <div className="flex border-b border-border">
                 {["Posts", "Members", "Events", "Spaces"].map((t) => (
-                  <button key={t} onClick={() => setCommunityTab(t)} className={`flex-1 py-3 text-sm font-medium ${communityTab === t ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}>
-                    {t}
-                  </button>
+                  <button key={t} onClick={() => setCommunityTab(t)} className={`flex-1 py-3 text-sm font-medium ${communityTab === t ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}>{t}</button>
                 ))}
               </div>
-              <div className="p-4 text-center text-sm text-muted-foreground">
-                {communityTab} content will appear here
-              </div>
+              <div className="p-4 text-center text-sm text-muted-foreground">{communityTab} content will appear here</div>
             </div>
           ) : (
-            // Main view
             <>
               <div className="flex items-center justify-between border-b border-border p-4">
                 <h1 className="text-xl font-bold text-foreground">Communities</h1>
-                <Button variant="hero" size="sm"><Plus className="mr-1 h-4 w-4" /> Create Community</Button>
+                {user && (
+                  <Dialog open={showCreate} onOpenChange={setShowCreate}>
+                    <DialogTrigger asChild>
+                      <Button variant="hero" size="sm"><Plus className="mr-1 h-4 w-4" /> Create</Button>
+                    </DialogTrigger>
+                    <DialogContent className="bg-background border-border">
+                      <DialogHeader><DialogTitle className="text-foreground">Create Community</DialogTitle></DialogHeader>
+                      <div className="flex flex-col gap-3">
+                        <Input placeholder="Community name" value={newCommunity.name} onChange={(e) => setNewCommunity({ ...newCommunity, name: e.target.value })} className="bg-input border-border text-foreground" />
+                        <textarea placeholder="Description" value={newCommunity.description} onChange={(e) => setNewCommunity({ ...newCommunity, description: e.target.value })} rows={3} className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground" />
+                        <select value={newCommunity.category} onChange={(e) => setNewCommunity({ ...newCommunity, category: e.target.value })} className="rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground">
+                          {categoryFilters.filter(c => c !== "All").map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <Button variant="hero" onClick={() => createCommunity.mutate()} disabled={createCommunity.isPending || !newCommunity.name}>
+                          {createCommunity.isPending ? "Creating..." : "Create"}
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                )}
               </div>
 
               <div className="border-b border-border p-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input placeholder="Search communities..." className="bg-input border-border pl-10 text-foreground placeholder:text-muted-foreground" />
+                  <Input placeholder="Search communities..." value={search} onChange={(e) => setSearch(e.target.value)} className="bg-input border-border pl-10 text-foreground placeholder:text-muted-foreground" />
                 </div>
               </div>
 
-              {/* Featured */}
-              <div className="border-b border-border p-4">
-                <h2 className="mb-3 text-sm font-semibold text-foreground">Featured Communities</h2>
-                <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
-                  {featured.map((f) => (
-                    <div key={f.name} className="min-w-[200px] rounded-lg border border-border bg-card p-4">
-                      <div className="mb-2 h-16 rounded-md bg-secondary" />
-                      <h3 className="font-semibold text-foreground">{f.name}</h3>
-                      <p className="text-xs text-muted-foreground">{f.members} members</p>
-                      <Button variant={f.joined ? "outline" : "hero"} size="sm" className="mt-2 w-full">
-                        {f.joined ? "Joined ✓" : "Join"}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Categories */}
               <div className="flex gap-2 overflow-x-auto border-b border-border p-4 scrollbar-none">
-                {categories.map((c) => (
-                  <button key={c} onClick={() => setActiveCat(c)} className={`shrink-0 rounded-full px-4 py-1.5 text-sm transition-colors ${activeCat === c ? "bg-primary text-primary-foreground" : "border border-border text-muted-foreground hover:text-foreground"}`}>
-                    {c}
-                  </button>
+                {categoryFilters.map((c) => (
+                  <button key={c} onClick={() => setActiveCat(c)} className={`shrink-0 rounded-full px-4 py-1.5 text-sm transition-colors ${activeCat === c ? "bg-primary text-primary-foreground" : "border border-border text-muted-foreground hover:text-foreground"}`}>{c}</button>
                 ))}
               </div>
 
-              {/* List */}
-              {filtered.map((c) => (
-                <div
-                  key={c.name}
-                  onClick={() => !c.isPrivate && setSelectedCommunity(c)}
-                  className="flex cursor-pointer items-center gap-3 border-b border-border p-4 transition-colors hover:bg-secondary/30"
-                >
-                  <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-secondary text-sm font-bold text-foreground">
-                    {c.name.slice(0, 2)}
-                    {c.isPrivate && <Lock className="absolute -right-1 -top-1 h-4 w-4 text-muted-foreground" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-foreground">{c.name}</h3>
-                      <span className="text-xs text-muted-foreground">{c.members} members</span>
-                      {c.isLive && <span className="flex items-center gap-1 text-xs text-primary"><span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" /> Live</span>}
+              {isLoading ? (
+                <div className="p-8 text-center text-muted-foreground">Loading communities...</div>
+              ) : filtered.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground">No communities found.</div>
+              ) : (
+                filtered.map((c: any) => (
+                  <div key={c.id} onClick={() => setSelectedCommunity(c)} className="flex cursor-pointer items-center gap-3 border-b border-border p-4 transition-colors hover:bg-secondary/30">
+                    <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-secondary text-sm font-bold text-foreground">
+                      {c.name.slice(0, 2)}
+                      {c.is_private && <Lock className="absolute -right-1 -top-1 h-4 w-4 text-muted-foreground" />}
                     </div>
-                    <p className="truncate text-sm text-muted-foreground">{c.desc}</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-foreground">{c.name}</h3>
+                        <span className="text-xs text-muted-foreground">{c.member_count} members</span>
+                      </div>
+                      {c.description && <p className="truncate text-sm text-muted-foreground">{c.description}</p>}
+                    </div>
+                    <Button
+                      variant={myMemberships.includes(c.id) ? "outline" : "hero"}
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); if (!myMemberships.includes(c.id)) joinCommunity.mutate(c.id); }}
+                    >
+                      {myMemberships.includes(c.id) ? "Joined ✓" : "Join"}
+                    </Button>
                   </div>
-                  <Button variant={c.isPrivate ? "outline" : "hero"} size="sm" onClick={(e) => e.stopPropagation()}>
-                    {c.isPrivate ? "Request" : "Join"}
-                  </Button>
-                </div>
-              ))}
+                ))
+              )}
             </>
           )}
         </div>
 
-        {/* Right Panel */}
-        <div className="hidden w-[300px] p-4 xl:block">
-          <div className="mb-4 rounded-lg border border-border bg-card p-4">
-            <h3 className="mb-3 text-sm font-semibold text-foreground">Your Communities</h3>
-            {featured.filter(f => f.joined).map((c) => (
-              <div key={c.name} className="mb-3 flex items-center gap-2 last:mb-0">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary text-xs font-bold text-foreground">{c.name.slice(0, 2)}</div>
-                <span className="text-sm text-foreground">{c.name}</span>
-              </div>
-            ))}
-          </div>
+        <div className="hidden w-[300px] shrink-0 p-4 xl:block">
           <div className="rounded-lg border border-border bg-card p-4">
-            <h3 className="mb-3 text-sm font-semibold text-foreground">Suggested for You</h3>
-            {featured.filter(f => !f.joined).slice(0, 3).map((c) => (
-              <div key={c.name} className="mb-3 flex items-center justify-between last:mb-0">
-                <div className="flex items-center gap-2">
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Your Communities</h3>
+            {communities.filter((c: any) => myMemberships.includes(c.id)).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Join a community to see it here.</p>
+            ) : (
+              communities.filter((c: any) => myMemberships.includes(c.id)).map((c: any) => (
+                <div key={c.id} className="mb-3 flex items-center gap-2 last:mb-0">
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary text-xs font-bold text-foreground">{c.name.slice(0, 2)}</div>
                   <span className="text-sm text-foreground">{c.name}</span>
                 </div>
-                <Button variant="outline" size="sm" className="h-7 text-xs">Join</Button>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

@@ -3,11 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Hexagon, ArrowRight, Upload, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 const roles = [
-  { icon: "🎯", title: "Job Seeker / Talent", desc: "Apply for jobs, showcase your resume, get hired." },
-  { icon: "💼", title: "Freelancer / Contractor", desc: "Sell your services, manage orders, earn in USDC." },
-  { icon: "🚀", title: "Founder / Entrepreneur", desc: "Post jobs, build teams, launch and sell startups." },
+  { icon: "🎯", title: "Job Seeker / Talent", desc: "Apply for jobs, showcase your resume, get hired.", value: "job_seeker" },
+  { icon: "💼", title: "Freelancer / Contractor", desc: "Sell your services, manage orders, earn in USDC.", value: "freelancer" },
+  { icon: "🚀", title: "Founder / Entrepreneur", desc: "Post jobs, build teams, launch and sell startups.", value: "founder" },
 ];
 
 export default function Onboarding() {
@@ -16,12 +19,43 @@ export default function Onboarding() {
   const [skills, setSkills] = useState<string[]>([]);
   const [skillInput, setSkillInput] = useState("");
   const [bio, setBio] = useState("");
+  const [username, setUsername] = useState("");
+  const [saving, setSaving] = useState(false);
   const navigate = useNavigate();
+  const { user, refreshProfile } = useAuth();
 
   const addSkill = () => {
     if (skillInput.trim() && !skills.includes(skillInput.trim())) {
       setSkills([...skills, skillInput.trim()]);
       setSkillInput("");
+    }
+  };
+
+  const handleFinish = async () => {
+    if (!user) {
+      navigate("/auth");
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          role: selectedRole,
+          username: username || null,
+          bio: bio || null,
+          skills,
+        })
+        .eq("user_id", user.id);
+      if (error) {
+        toast.error(error.message);
+      } else {
+        await refreshProfile();
+        toast.success("Profile set up!");
+        navigate("/dashboard");
+      }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -38,7 +72,7 @@ export default function Onboarding() {
 
         {step === 1 ? (
           <>
-            <h1 className="mb-2 text-center text-2xl font-bold text-foreground">
+            <h1 className="mb-2 text-center text-xl sm:text-2xl font-bold text-foreground">
               How do you want to use Foundry?
             </h1>
             <p className="mb-8 text-center text-sm text-muted-foreground">
@@ -47,10 +81,10 @@ export default function Onboarding() {
             <div className="flex flex-col gap-3">
               {roles.map((r) => (
                 <button
-                  key={r.title}
-                  onClick={() => setSelectedRole(r.title)}
+                  key={r.value}
+                  onClick={() => setSelectedRole(r.value)}
                   className={`rounded-xl border p-5 text-left transition-all ${
-                    selectedRole === r.title
+                    selectedRole === r.value
                       ? "border-primary bg-primary/5 glow-primary"
                       : "border-border hover:border-muted-foreground"
                   }`}
@@ -72,7 +106,7 @@ export default function Onboarding() {
           </>
         ) : (
           <>
-            <h1 className="mb-2 text-center text-2xl font-bold text-foreground">
+            <h1 className="mb-2 text-center text-xl sm:text-2xl font-bold text-foreground">
               Set up your builder profile
             </h1>
             <div className="mt-8 flex flex-col gap-4">
@@ -81,7 +115,12 @@ export default function Onboarding() {
                   <Upload className="h-6 w-6 text-muted-foreground" />
                 </div>
               </div>
-              <Input placeholder="@username" className="bg-input border-border text-foreground placeholder:text-muted-foreground" />
+              <Input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="@username"
+                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+              />
               <div className="relative">
                 <textarea
                   value={bio}
@@ -113,8 +152,8 @@ export default function Onboarding() {
                   ))}
                 </div>
               </div>
-              <Button variant="hero" className="mt-2 w-full" onClick={() => navigate("/dashboard")}>
-                Finish Setup <ArrowRight className="ml-1 h-4 w-4" />
+              <Button variant="hero" className="mt-2 w-full" onClick={handleFinish} disabled={saving}>
+                {saving ? "Saving..." : "Finish Setup"} <ArrowRight className="ml-1 h-4 w-4" />
               </Button>
               <button onClick={() => navigate("/dashboard")} className="text-center text-sm text-muted-foreground hover:text-foreground">
                 Skip for now
